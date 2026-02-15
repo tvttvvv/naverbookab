@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>도서 A/B 분류기</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    textarea { width: 420px; height: 120px; padding: 8px; }
+    button { padding: 8px 12px; }
+    table { border-collapse: collapse; margin-top: 20px; width: 100%; max-width: 900px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    th { background: #f2f2f2; }
+    .A { color: green; font-weight: bold; }
+    .B { color: red; font-weight: bold; }
+    .EXCLUDE { color: gray; }
+  </style>
+</head>
+<body>
+  <h2>네이버 도서 A/B 자동 분류</h2>
+
+  <p>키워드 여러 개를 줄바꿈으로 입력</p>
+  <textarea id="keywords" placeholder="예)\n채소절임 책\nThe Giver 기억전달자\n캔들차트 하나로 끝내는 추세추종 투자"></textarea><br />
+  <button onclick="searchMany()">일괄 검색</button>
+
+  <table id="resultTable">
+    <thead>
+      <tr>
+        <th>선택</th>
+        <th>키워드</th>
+        <th>분류</th>
+        <th>네이버 링크</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
