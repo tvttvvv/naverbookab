@@ -2,6 +2,7 @@ import os
 import time
 import requests
 from flask import Flask, request, render_template_string
+from difflib import SequenceMatcher
 
 app = Flask(__name__)
 
@@ -42,21 +43,17 @@ HTML = """
 {% endif %}
 """
 
+def similarity(a, b):
+    return SequenceMatcher(None, a, b).ratio()
+
 def normalize_isbn(isbn_raw):
-    """
-    네이버 API isbn 예시:
-    '9788937460000 893746000X'
-    → 13자리 ISBN만 추출
-    """
     if not isbn_raw:
         return None
-
     parts = isbn_raw.split()
     for p in parts:
         if len(p) == 13 and p.isdigit():
             return p
     return None
-
 
 def check_keyword(keyword):
     url = "https://openapi.naver.com/v1/search/book.json"
@@ -83,13 +80,17 @@ def check_keyword(keyword):
     isbn_set = set()
 
     for item in items:
-        isbn = normalize_isbn(item.get("isbn"))
-        if isbn:
-            isbn_set.add(isbn)
+        title = item.get("title", "").replace("<b>", "").replace("</b>", "")
+        sim = similarity(keyword, title)
+
+        # 유사도 0.8 이상만 인정
+        if sim >= 0.8:
+            isbn = normalize_isbn(item.get("isbn"))
+            if isbn:
+                isbn_set.add(isbn)
 
     unique_count = len(isbn_set)
 
-    # 분류 기준
     if unique_count <= 1:
         grade = "A"
     else:
@@ -118,6 +119,8 @@ def home():
                 "grade": grade,
                 "link": f"https://search.naver.com/search.naver?query={keyword}"
             })
+
+            time.sleep(0.2)  # API 과부하 방지
 
         total_time = round(time.time() - start_time, 2)
 
