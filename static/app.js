@@ -3,8 +3,9 @@ async function run() {
   if (!raw) return;
 
   const keywords = raw.split("\n").map(k => k.trim()).filter(Boolean);
-  if (keywords.length > 20) {
-    alert("한 번에 20개 이하만 입력하세요");
+
+  if (keywords.length > 100) {
+    alert("한 번에 100개 이하만 입력하세요.");
     return;
   }
 
@@ -12,8 +13,9 @@ async function run() {
   tbody.innerHTML = "";
 
   for (let kw of keywords) {
+
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td colspan="5">검색중: ${kw}</td>`;
+    tr.innerHTML = `<td colspan="6">검색중: ${kw}</td>`;
     tbody.appendChild(tr);
 
     try {
@@ -26,7 +28,7 @@ async function run() {
       const data = await res.json();
 
       if (data.error) {
-        tr.innerHTML = `<td colspan="5" style="color:red;">${data.error}</td>`;
+        tr.innerHTML = `<td colspan="6" style="color:red;">${data.error}</td>`;
         continue;
       }
 
@@ -35,10 +37,12 @@ async function run() {
         <td>${data.keyword}</td>
         <td>${data.count}</td>
         <td>${data.class}</td>
+        <td>${data.time}s</td>
         <td><a href="${data.url}" target="_blank">열기</a></td>
       `;
+
     } catch (e) {
-      tr.innerHTML = `<td colspan="5">네트워크 오류</td>`;
+      tr.innerHTML = `<td colspan="6">네트워크 오류</td>`;
     }
   }
 }
