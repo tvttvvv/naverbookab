@@ -94,6 +94,19 @@ function processNext(queue){
     });
 }
 
+function getSortedResults(){
+    let sort = document.getElementById("sort").value;
+    let data = [...results];
+
+    if(sort === "best"){
+        data.sort((a,b)=> a.grade.localeCompare(b.grade));
+    } else {
+        data.sort((a,b)=> originalOrder.indexOf(a.keyword) - originalOrder.indexOf(b.keyword));
+    }
+
+    return data;
+}
+
 function renderTable(){
     let table = document.getElementById("resultTable");
     table.innerHTML = `
@@ -104,14 +117,7 @@ function renderTable(){
     <th>링크</th>
     </tr>`;
 
-    let sort = document.getElementById("sort").value;
-    let data = [...results];
-
-    if(sort === "best"){
-        data.sort((a,b)=> a.grade.localeCompare(b.grade));
-    } else {
-        data.sort((a,b)=> originalOrder.indexOf(a.keyword) - originalOrder.indexOf(b.keyword));
-    }
+    let data = getSortedResults();
 
     data.forEach(r=>{
         table.innerHTML += `
@@ -125,10 +131,12 @@ function renderTable(){
 }
 
 function downloadExcel(){
+    let sortedData = getSortedResults();
+
     fetch("/download", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({results: results})
+        body: JSON.stringify({results: sortedData})
     })
     .then(res => res.blob())
     .then(blob => {
