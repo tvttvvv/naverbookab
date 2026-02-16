@@ -9,7 +9,11 @@ app = Flask(__name__)
 NAVER_CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
 NAVER_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")
 
+
 def search_book(keyword):
+    if not NAVER_CLIENT_ID or not NAVER_CLIENT_SECRET:
+        return 0
+
     url = "https://openapi.naver.com/v1/search/book.json"
 
     headers = {
@@ -35,25 +39,30 @@ def search_book(keyword):
         return 0
 
 
-@app.route("/")
+@app.route("/", methods=["GET"])
 def index():
     return render_template("index.html")
 
 
-@app.route("/search", methods=["POST"])
+@app.route("/search", methods=["GET", "POST"])
 def search():
-    keywords = request.form["keywords"].split("\n")
-    keywords = [k.strip() for k in keywords if k.strip()]
+    if request.method == "GET":
+        return render_template("index.html")
+
+    keywords_raw = request.form.get("keywords", "")
+    keywords = [k.strip() for k in keywords_raw.split("\n") if k.strip()]
 
     results = []
     start_time = time.time()
 
     for keyword in keywords[:100]:
         count = search_book(keyword)
-
         classification = "A" if count <= 2 else "B"
 
-        naver_link = f"https://search.naver.com/search.naver?where=book&query={urllib.parse.quote(keyword)}"
+        naver_link = (
+            "https://search.naver.com/search.naver?where=book&query="
+            + urllib.parse.quote(keyword)
+        )
 
         results.append({
             "keyword": keyword,
@@ -64,7 +73,11 @@ def search():
 
     total_time = round(time.time() - start_time, 2)
 
-    return render_template("index.html", results=results, total_time=total_time)
+    return render_template(
+        "index.html",
+        results=results,
+        total_time=total_time
+    )
 
 
 if __name__ == "__main__":
