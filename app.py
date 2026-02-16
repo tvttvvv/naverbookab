@@ -1,8 +1,7 @@
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, render_template_string, request
 import requests
 import os
 import time
-import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app = Flask(__name__)
@@ -10,124 +9,68 @@ app = Flask(__name__)
 NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID")
 NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET")
 
-MAX_WORKERS = 20
+MAX_WORKERS = 25
 MAX_DISPLAY = 50
 
-job_status = {
-    "running": False,
-    "total": 0,
-    "done": 0,
-    "results": [],
-    "start_time": 0
-}
 
 HTML = """
 <!doctype html>
+<html>
+<head>
 <title>naverbookab</title>
-<h1>naverbookab</h1>
-
-<textarea id="keywords" rows="15" cols="60"
-placeholder="책 제목을 한 줄에 하나씩 입력 (최대 1000개)"
-oninput="updateCount()"></textarea><br>
-<p>총 입력 개수: <span id="count">0</span></p>
-
-<button onclick="startJob()">일괄 분류 시작</button>
-
-<select id="sortMode" onchange="applySort()">
-<option value="original">원본 순서</option>
-<option value="a_first">A에 가까운 순</option>
-</select>
-
-<p id="progress"></p>
-<p id="eta"></p>
-
-<table border="1" cellpadding="5" id="resultTable" style="display:none;">
-<tr>
-<th>키워드</th>
-<th>판매처없는개수</th>
-<th>분류</th>
-<th>링크</th>
-</tr>
-</table>
-
 <script>
-let globalResults = [];
-
-function updateCount(){
+function updateCount() {
     let text = document.getElementById("keywords").value;
-    let lines = text.split("\\n").filter(x=>x.trim()!="");
-    document.getElementById("count").innerText = lines.length;
-}
-
-function startJob(){
-    let keywords = document.getElementById("keywords").value;
-
-    fetch("/start", {
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({keywords:keywords})
-    });
-
-    checkStatus();
-}
-
-function checkStatus(){
-    let interval = setInterval(()=>{
-        fetch("/status")
-        .then(res=>res.json())
-        .then(data=>{
-            if(data.total==0) return;
-
-            let percent = ((data.done/data.total)*100).toFixed(1);
-            document.getElementById("progress").innerText =
-                "진행률: " + percent + "% ("+data.done+"/"+data.total+")";
-
-            document.getElementById("eta").innerText =
-                "예상 남은 시간: " + data.eta + "초";
-
-            if(!data.running && data.done===data.total){
-                clearInterval(interval);
-                globalResults = data.results;
-                applySort();
-            }
-        })
-    },1000);
-}
-
-function applySort(){
-    let mode = document.getElementById("sortMode").value;
-    let table = document.getElementById("resultTable");
-    table.style.display="block";
-    table.innerHTML = `
-<tr>
-<th>키워드</th>
-<th>판매처없는개수</th>
-<th>분류</th>
-<th>링크</th>
-</tr>`;
-
-    let results = [...globalResults];
-
-    if(mode==="a_first"){
-        results.sort((a,b)=>{
-            if(a.grade!==b.grade){
-                return a.grade==="A" ? -1 : 1;
-            }
-            return a.count - b.count;
-        });
-    }
-
-    results.forEach(r=>{
-        let row = table.insertRow();
-        row.insertCell(0).innerText = r.keyword;
-        row.insertCell(1).innerText = r.count;
-        row.insertCell(2).innerText = r.grade;
-        row.insertCell(3).innerHTML =
-            "<a href='"+r.link+"' target='_blank'>열기</a>";
-    });
+    let lines = text.split("\\n").filter(l => l.trim() !== "");
+    document.getElementById("countDisplay").innerText = "총 입력 건수: " + lines.length + "건";
 }
 </script>
+</head>
+
+<body>
+<h1>naverbookab</h1>
+
+<form method="post">
+<textarea id="keywords" name="keywords" rows="15" cols="70"
+oninput="updateCount()"
+placeholder="책 제목을 한 줄에 하나씩 입력 (최대 1000개)"></textarea>
+<br>
+<p id="countDisplay">총 입력 건수: 0건</p>
+
+<select name="sort_option">
+<option value="original">원본순</option>
+<option value="best">A 우선 정렬</option>
+<option value="worst">B 우선 정렬</option>
+</select>
+
+<br><br>
+<button type="submit">일괄 분류</button>
+</form>
+
+{% if results %}
+<p><b>총 소요시간:</b> {{ total_time }}초</p>
+<table border="1" cellpadding="5">
+<tr>
+<th>키워드</th>
+<th>판매처 개수</th>
+<th>분류</th>
+<th>네이버 링크</th>
+</tr>
+
+{% for r in results %}
+<tr>
+<td>{{ r.keyword }}</td>
+<td>{{ r.count }}</td>
+<td>{{ r.grade }}</td>
+<td><a href="{{ r.link }}" target="_blank">열기</a></td>
+</tr>
+{% endfor %}
+</table>
+{% endif %}
+</body>
+</html>
 """
+
 
 def check_keyword(keyword):
     url = "https://openapi.naver.com/v1/search/book.json"
@@ -143,89 +86,68 @@ def check_keyword(keyword):
     }
 
     try:
-        response = requests.get(url, headers=headers, params=params, timeout=3)
+        response = requests.get(url, headers=headers, params=params, timeout=5)
         data = response.json()
     except:
         return {
             "keyword": keyword,
-            "count": 0,
+            "count": 999,
             "grade": "B",
             "link": f"https://search.naver.com/search.naver?query={keyword}"
         }
 
     items = data.get("items", [])
-    no_seller = 0
+    seller_count = 0
 
     for item in items:
         price = item.get("price")
-        if not price or price == "0":
-            no_seller += 1
 
-    grade = "A" if no_seller <= 1 else "B"
+        if price and price != "0":
+            seller_count += 1
+
+    grade = "A" if seller_count == 0 else "B"
 
     return {
         "keyword": keyword,
-        "count": no_seller,
+        "count": seller_count,
         "grade": grade,
         "link": f"https://search.naver.com/search.naver?query={keyword}"
     }
 
 
-def background_job(keywords):
-    job_status["running"] = True
-    job_status["total"] = len(keywords)
-    job_status["done"] = 0
-    job_status["results"] = []
-    job_status["start_time"] = time.time()
-
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = {executor.submit(check_keyword, kw): kw for kw in keywords}
-
-        for future in as_completed(futures):
-            result = future.result()
-            job_status["results"].append(result)
-            job_status["done"] += 1
-
-    job_status["running"] = False
-
-
-@app.route("/")
+@app.route("/", methods=["GET", "POST"])
 def home():
-    return render_template_string(HTML)
+    results = []
+    total_time = 0
 
+    if request.method == "POST":
+        start = time.time()
 
-@app.route("/start", methods=["POST"])
-def start():
-    if job_status["running"]:
-        return jsonify({"status":"already running"})
+        keywords = request.form.get("keywords", "").splitlines()
+        keywords = [k.strip() for k in keywords if k.strip()][:1000]
 
-    data = request.json
-    keywords = data.get("keywords","").splitlines()
-    keywords = [k.strip() for k in keywords if k.strip()][:1000]
+        sort_option = request.form.get("sort_option", "original")
 
-    thread = threading.Thread(target=background_job, args=(keywords,))
-    thread.start()
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = [executor.submit(check_keyword, kw) for kw in keywords]
 
-    return jsonify({"status":"started"})
+            for future in as_completed(futures):
+                results.append(future.result())
 
+        total_time = round(time.time() - start, 2)
 
-@app.route("/status")
-def status():
-    if job_status["total"] == 0:
-        return jsonify(job_status)
+        keyword_order = {k: i for i, k in enumerate(keywords)}
 
-    elapsed = time.time() - job_status["start_time"]
-    avg = elapsed / job_status["done"] if job_status["done"] else 0
-    remaining = job_status["total"] - job_status["done"]
-    eta = int(avg * remaining) if avg else 0
+        if sort_option == "original":
+            results.sort(key=lambda x: keyword_order.get(x["keyword"], 0))
 
-    return jsonify({
-        "running": job_status["running"],
-        "total": job_status["total"],
-        "done": job_status["done"],
-        "eta": eta,
-        "results": job_status["results"] if not job_status["running"] else []
-    })
+        elif sort_option == "best":
+            results.sort(key=lambda x: (x["grade"] != "A", x["count"]))
+
+        elif sort_option == "worst":
+            results.sort(key=lambda x: (x["grade"] != "B", -x["count"]))
+
+    return render_template_string(HTML, results=results, total_time=total_time)
 
 
 if __name__ == "__main__":
