@@ -1,63 +1,46 @@
 from flask import Flask, render_template, request, jsonify
-from playwright.sync_api import sync_playwright
-from bs4 import BeautifulSoup
-import urllib.parse
+import requests
+import os
 import time
-import re
 
 app = Flask(__name__)
 
-playwright = sync_playwright().start()
-browser = playwright.chromium.launch(
-    headless=True,
-    args=["--no-sandbox"]
-)
+NAVER_CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
+NAVER_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")
 
-def classify_naver_book(html):
-    soup = BeautifulSoup(html, "html.parser")
-    full_text = soup.get_text(" ", strip=True)
+def search_naver_book_api(keyword):
+    start_time = time.time()
 
-    # 1️⃣ 대표 단일 상품형 감지
-    if re.search(r"도서\s*판매처\s*\d+", full_text):
-        return "B", 1
+    url = "https://openapi.naver.com/v1/search/book.json"
+    headers = {
+        "X-Naver-Client-Id": NAVER_CLIENT_ID,
+        "X-Naver-Client-Secret": NAVER_CLIENT_SECRET
+    }
 
-    # 2️⃣ 반복 제목 링크 세기 (안정적 기준)
-    title_links = soup.find_all("a", href=re.compile(r"/search.naver\?where=book"))
+    params = {
+        "query": keyword,
+        "display": 100  # 최대 100개
+    }
 
-    count = len(title_links)
+    response = requests.get(url, headers=headers, params=params)
+    data = response.json()
 
-    # 너무 많이 잡히는 경우 방지
-    if count > 20:
-        count = 20
+    total = data.get("total", 0)
 
-    if count <= 2:
-        return "A", count
+    # A는 2개 이하
+    if total <= 2:
+        classification = "A"
     else:
-        return "B", count
+        classification = "B"
 
-
-def crawl(keyword):
-    start = time.time()
-
-    url = f"https://search.naver.com/search.naver?where=book&query={urllib.parse.quote(keyword)}"
-
-    page = browser.new_page()
-    page.goto(url, wait_until="networkidle")
-    time.sleep(1.2)
-
-    html = page.content()
-    page.close()
-
-    cls, count = classify_naver_book(html)
-
-    end = time.time()
+    elapsed = round(time.time() - start_time, 2)
 
     return {
         "keyword": keyword,
-        "class": cls,
-        "count": count,
-        "url": url,
-        "time": round(end - start, 2)
+        "count": total,
+        "class": classification,
+        "time": elapsed,
+        "url": f"https://search.naver.com/search.naver?where=book&query={keyword}"
     }
 
 
@@ -68,15 +51,25 @@ def index():
 
 @app.route("/search", methods=["POST"])
 def search():
-    try:
-        data = request.get_json(force=True)
-        keyword = data.get("keyword")
+    keywords = request.json.get("keywords", [])
 
-        if not keyword:
-            return jsonify({"error": "keyword missing"})
+    results = []
 
-        result = crawl(keyword)
-        return jsonify(result)
+    for keyword in keywords:
+        try:
+            result = search_naver_book_api(keyword)
+            results.append(result)
+        except Exception as e:
+            results.append({
+                "keyword": keyword,
+                "count": 0,
+                "class": "ERROR",
+                "time": 0,
+                "url": ""
+            })
 
-    except Exception as e:
-        return jsonify({"error": str(e)})
+    return jsonify(results)
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8080)
