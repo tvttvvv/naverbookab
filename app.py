@@ -16,11 +16,10 @@ browser = playwright.chromium.launch(
 def classify_naver_book(html):
     soup = BeautifulSoup(html, "html.parser")
 
-    # 네이버 도서 카드 개수
-    cards = soup.select("li.bx")
-    count = len(cards)
+    # 실제 도서 제목 링크 기준으로 카운트
+    titles = soup.select("a.title")
+    count = len(titles)
 
-    # A는 최대 2개
     if count <= 2:
         return "A", count
     else:
@@ -28,21 +27,27 @@ def classify_naver_book(html):
 
 
 def crawl(keyword):
+    start_time = time.time()
+
     url = f"https://search.naver.com/search.naver?where=book&query={urllib.parse.quote(keyword)}"
 
     page = browser.new_page()
     page.goto(url, wait_until="networkidle")
-    time.sleep(1.5)
+    time.sleep(1.2)
+
     html = page.content()
     page.close()
 
     cls, count = classify_naver_book(html)
 
+    end_time = time.time()
+
     return {
         "keyword": keyword,
         "class": cls,
         "count": count,
-        "url": url
+        "url": url,
+        "time": round(end_time - start_time, 2)
     }
 
 
