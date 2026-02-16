@@ -1,13 +1,12 @@
+from flask import Flask, render_template_string, request
+import requests
 import os
 import time
-import requests
-from flask import Flask, request, render_template_string
-from difflib import SequenceMatcher
 
 app = Flask(__name__)
 
-NAVER_CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
-NAVER_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")
+NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID")
+NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET")
 
 HTML = """
 <!doctype html>
@@ -15,22 +14,20 @@ HTML = """
 <h1>naverbookab</h1>
 
 <form method="post">
-<textarea name="keywords" rows="15" cols="50" placeholder="책 제목을 한 줄에 하나씩 입력"></textarea><br><br>
+<textarea name="keywords" rows="10" cols="50" placeholder="책 제목을 한 줄에 하나씩 입력"></textarea><br><br>
 <button type="submit">일괄 분류</button>
 </form>
 
-{% if total_time %}
-<h3>총 소요시간: {{ total_time }}초</h3>
-{% endif %}
-
 {% if results %}
+<p><b>총 소요시간:</b> {{ total_time }}초</p>
 <table border="1" cellpadding="5">
 <tr>
 <th>키워드</th>
-<th>ISBN 종류 수</th>
+<th>판매처 없는 개수</th>
 <th>분류</th>
 <th>네이버 링크</th>
 </tr>
+
 {% for r in results %}
 <tr>
 <td>{{ r.keyword }}</td>
@@ -39,21 +36,10 @@ HTML = """
 <td><a href="{{ r.link }}" target="_blank">열기</a></td>
 </tr>
 {% endfor %}
+
 </table>
 {% endif %}
 """
-
-def similarity(a, b):
-    return SequenceMatcher(None, a, b).ratio()
-
-def normalize_isbn(isbn_raw):
-    if not isbn_raw:
-        return None
-    parts = isbn_raw.split()
-    for p in parts:
-        if len(p) == 13 and p.isdigit():
-            return p
-    return None
 
 def check_keyword(keyword):
     url = "https://openapi.naver.com/v1/search/book.json"
@@ -65,7 +51,7 @@ def check_keyword(keyword):
 
     params = {
         "query": keyword,
-        "display": 100
+        "display": 50
     }
 
     try:
@@ -76,41 +62,39 @@ def check_keyword(keyword):
         return 0, "B"
 
     items = data.get("items", [])
-
-    isbn_set = set()
+    no_seller_count = 0
 
     for item in items:
-        title = item.get("title", "").replace("<b>", "").replace("</b>", "")
-        sim = similarity(keyword, title)
+        price = item.get("price")
 
-        # 유사도 0.8 이상만 인정
-        if sim >= 0.8:
-            isbn = normalize_isbn(item.get("isbn"))
-            if isbn:
-                isbn_set.add(isbn)
+        # 판매처 없는 상품
+        if not price or price == "0":
+            no_seller_count += 1
 
-    unique_count = len(isbn_set)
-
-    if unique_count <= 1:
+    # 기준: 판매처 없는 상품이 1개 이하 → A
+    if no_seller_count <= 1:
         grade = "A"
     else:
         grade = "B"
 
-    return unique_count, grade
+    return no_seller_count, grade
 
 
 @app.route("/", methods=["GET", "POST"])
 def home():
     results = []
-    total_time = None
+    total_time = 0
 
     if request.method == "POST":
-        start_time = time.time()
+        start = time.time()
 
-        keywords_text = request.form.get("keywords", "")
-        keywords = [k.strip() for k in keywords_text.split("\n") if k.strip()]
+        keywords = request.form.get("keywords", "").splitlines()
 
         for keyword in keywords:
+            keyword = keyword.strip()
+            if not keyword:
+                continue
+
             count, grade = check_keyword(keyword)
 
             results.append({
@@ -120,9 +104,7 @@ def home():
                 "link": f"https://search.naver.com/search.naver?query={keyword}"
             })
 
-            time.sleep(0.2)  # API 과부하 방지
-
-        total_time = round(time.time() - start_time, 2)
+        total_time = round(time.time() - start, 2)
 
     return render_template_string(HTML, results=results, total_time=total_time)
 
