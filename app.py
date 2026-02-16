@@ -35,15 +35,15 @@ def classify_keyword(keyword):
             return 0, "B"
 
         data = response.json()
+
+        total_count = data.get("total", 0)
         items = data.get("items", [])
 
-        count = len(items)
+        # 1차 필터: 전체 검색 결과 기준
+        if total_count > 5:
+            return total_count, "B"
 
-        # 1차 필터: 개수 기준
-        if count > 5:
-            return count, "B"
-
-        # 2차 필터: 제목 유사도 검사
+        # 2차 필터: 제목 유사도
         high_similarity_count = 0
 
         for item in items:
@@ -53,9 +53,9 @@ def classify_keyword(keyword):
                 high_similarity_count += 1
 
         if high_similarity_count == 1:
-            return count, "A"
+            return total_count, "A"
         else:
-            return count, "B"
+            return total_count, "B"
 
     except:
         return 0, "B"
