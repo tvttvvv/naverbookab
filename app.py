@@ -1,7 +1,6 @@
 from flask import Flask, render_template_string, request, jsonify, send_file
 import requests
 import re
-import time
 import csv
 import io
 
@@ -120,7 +119,7 @@ function renderTable(){
         <td>${r.keyword}</td>
         <td>${r.count}</td>
         <td>${r.grade}</td>
-        <td>${r.link}</td>
+        <td><a href="${r.link}" target="_blank">열기</a></td>
         </tr>`;
     });
 }
