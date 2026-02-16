@@ -9,11 +9,6 @@ NAVER_CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
 NAVER_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")
 
 
-@app.route("/ping")
-def ping():
-    return "OK"
-
-
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -47,9 +42,32 @@ def search():
             }
 
             response = requests.get(url, headers=headers, params=params, timeout=5)
-            data = response.json()
 
-            total = data.get("total", 0)
+            # 🔥 상태코드 확인
+            if response.status_code != 200:
+                results.append({
+                    "keyword": keyword,
+                    "count": "-",
+                    "class": "ERROR",
+                    "link": "",
+                    "error": f"HTTP {response.status_code}"
+                })
+                continue
+
+            data_json = response.json()
+
+            # 🔥 네이버 에러 체크
+            if "errorCode" in data_json:
+                results.append({
+                    "keyword": keyword,
+                    "count": "-",
+                    "class": "API ERROR",
+                    "link": "",
+                    "error": data_json.get("errorMessage")
+                })
+                continue
+
+            total = data_json.get("total", 0)
 
             classification = "A" if total <= 2 else "B"
 
@@ -63,8 +81,8 @@ def search():
         except Exception as e:
             results.append({
                 "keyword": keyword,
-                "count": 0,
-                "class": "ERROR",
+                "count": "-",
+                "class": "SERVER ERROR",
                 "link": "",
                 "error": str(e)
             })
