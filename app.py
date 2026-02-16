@@ -2,6 +2,7 @@ from flask import Flask, render_template_string, request
 import requests
 import os
 import time
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app = Flask(__name__)
@@ -9,8 +10,7 @@ app = Flask(__name__)
 NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID")
 NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET")
 
-MAX_WORKERS = 10
-MAX_DISPLAY = 5
+MAX_WORKERS = 8
 TIMEOUT = 2
 
 HTML = """
@@ -41,7 +41,7 @@ oninput="updateCount(this)"></textarea><br>
 <table border="1" cellpadding="5">
 <tr>
 <th>키워드</th>
-<th>판매처 수</th>
+<th>판매처 존재</th>
 <th>분류</th>
 <th>네이버 링크</th>
 </tr>
@@ -49,7 +49,7 @@ oninput="updateCount(this)"></textarea><br>
 {% for r in results %}
 <tr {% if r.grade == 'A' %}style="background-color:#eaffea;"{% endif %}>
 <td>{{ r.keyword }}</td>
-<td>{{ r.seller_count }}</td>
+<td>{{ r.seller_exist }}</td>
 <td>{{ r.grade }}</td>
 <td><a href="{{ r.link }}" target="_blank">열기</a></td>
 </tr>
@@ -66,54 +66,68 @@ document.getElementById("count").innerText = lines.length;
 """
 
 def check_keyword(keyword, index):
-    url = "https://openapi.naver.com/v1/search/book.json"
-
+    # 1️⃣ API로 ISBN 가져오기
+    api_url = "https://openapi.naver.com/v1/search/book.json"
     headers = {
         "X-Naver-Client-Id": NAVER_CLIENT_ID,
         "X-Naver-Client-Secret": NAVER_CLIENT_SECRET
     }
 
-    params = {
-        "query": keyword,
-        "display": MAX_DISPLAY
-    }
+    params = {"query": keyword, "display": 1}
 
     try:
-        response = requests.get(url, headers=headers, params=params, timeout=TIMEOUT)
-        data = response.json()
+        res = requests.get(api_url, headers=headers, params=params, timeout=TIMEOUT)
+        data = res.json()
     except:
         return {
             "keyword": keyword,
-            "seller_count": -1,
+            "seller_exist": "오류",
             "grade": "B",
             "link": f"https://search.naver.com/search.naver?where=book&query={keyword}",
             "index": index
         }
 
     items = data.get("items", [])
+    if not items:
+        return {
+            "keyword": keyword,
+            "seller_exist": "없음",
+            "grade": "A",
+            "link": f"https://search.naver.com/search.naver?where=book&query={keyword}",
+            "index": index
+        }
 
-    # 판매처 판단
-    # 네이버 API에서 price가 0이 아니면 판매처 있음
-    seller_exist = False
+    isbn = items[0].get("isbn", "").split()[-1]
 
-    for item in items:
-        price = item.get("price")
-        if price and price != "0":
-            seller_exist = True
-            break
+    # 2️⃣ HTML에서 판매처 숫자 체크
+    search_url = f"https://search.naver.com/search.naver?where=book&query={isbn}"
 
-    if seller_exist:
+    try:
+        html = requests.get(search_url, timeout=TIMEOUT).text
+    except:
+        return {
+            "keyword": keyword,
+            "seller_exist": "오류",
+            "grade": "B",
+            "link": search_url,
+            "index": index
+        }
+
+    # 🔥 "판매처 숫자" 찾기
+    seller_match = re.search(r"판매처\s*\d+", html)
+
+    if seller_match:
         grade = "B"
-        seller_count = 1
+        seller_exist = "있음"
     else:
         grade = "A"
-        seller_count = 0
+        seller_exist = "없음"
 
     return {
         "keyword": keyword,
-        "seller_count": seller_count,
+        "seller_exist": seller_exist,
         "grade": grade,
-        "link": f"https://search.naver.com/search.naver?where=book&query={keyword}",
+        "link": search_url,
         "index": index
     }
 
