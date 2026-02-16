@@ -1,38 +1,44 @@
-if (keywords.length > 20) {
-  alert("한 번에 20개 이하만 입력하세요");
-  return;
-}
-async function searchMany() {
+async function run() {
   const raw = document.getElementById("keywords").value.trim();
   if (!raw) return;
 
-  const keywords = raw.split("\n").map(s => s.trim()).filter(Boolean);
-  const tbody = document.getElementById("resultBody");
+  const keywords = raw.split("\n").map(k => k.trim()).filter(Boolean);
+  if (keywords.length > 20) {
+    alert("한 번에 20개 이하만 입력하세요");
+    return;
+  }
+
+  const tbody = document.getElementById("result");
   tbody.innerHTML = "";
 
-  for (const kw of keywords) {
+  for (let kw of keywords) {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>...</td><td>${kw}</td><td>로딩</td><td></td><td></td>`;
+    tr.innerHTML = `<td colspan="5">검색중: ${kw}</td>`;
     tbody.appendChild(tr);
 
     try {
       const res = await fetch("/search", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ keyword: kw })
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({keyword: kw})
       });
+
       const data = await res.json();
 
+      if (data.error) {
+        tr.innerHTML = `<td colspan="5" style="color:red;">${data.error}</td>`;
+        continue;
+      }
+
       tr.innerHTML = `
-        <td>${data.class === "A" ? `<input type="checkbox"/>` : ""}</td>
+        <td>${data.class === "A" ? `<input type="checkbox">` : ""}</td>
         <td>${data.keyword}</td>
         <td>${data.count}</td>
-        <td class="${data.class}">${data.class}</td>
+        <td>${data.class}</td>
         <td><a href="${data.url}" target="_blank">열기</a></td>
       `;
     } catch (e) {
-      tr.innerHTML = `<td colspan="5">에러: ${kw}</td>`;
+      tr.innerHTML = `<td colspan="5">네트워크 오류</td>`;
     }
   }
 }
-
