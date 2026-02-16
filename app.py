@@ -3,15 +3,14 @@ import requests
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from difflib import SequenceMatcher
 
 app = Flask(__name__)
 
 NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID")
 NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET")
 
-MAX_WORKERS = 20
-MAX_DISPLAY = 100
+MAX_WORKERS = 25   # 동시에 처리할 스레드 수 (25면 안정적)
+MAX_DISPLAY = 50   # 검색 최대 개수
 
 HTML = """
 <!doctype html>
@@ -20,7 +19,7 @@ HTML = """
 
 <form method="post">
 <textarea name="keywords" rows="15" cols="60"
-placeholder="책 제목을 한 줄에 하나씩 입력 (최대 1000개)"></textarea><br><br>
+placeholder="책 제목을 한 줄에 하나씩 입력 (최대 500개)"></textarea><br><br>
 <button type="submit">일괄 분류</button>
 </form>
 
@@ -29,7 +28,7 @@ placeholder="책 제목을 한 줄에 하나씩 입력 (최대 1000개)"></texta
 <table border="1" cellpadding="5">
 <tr>
 <th>키워드</th>
-<th>ISBN종류수</th>
+<th>판매처 없는 개수</th>
 <th>분류</th>
 <th>네이버 링크</th>
 </tr>
@@ -47,18 +46,6 @@ placeholder="책 제목을 한 줄에 하나씩 입력 (최대 1000개)"></texta
 {% endif %}
 """
 
-def similarity(a, b):
-    return SequenceMatcher(None, a.lower(), b.lower()).ratio()
-
-def normalize_isbn(isbn_raw):
-    if not isbn_raw:
-        return None
-    parts = isbn_raw.split()
-    for p in parts:
-        if len(p) == 13 and p.isdigit():
-            return p
-    return None
-
 def check_keyword(keyword):
     url = "https://openapi.naver.com/v1/search/book.json"
 
@@ -74,8 +61,9 @@ def check_keyword(keyword):
 
     try:
         response = requests.get(url, headers=headers, params=params, timeout=3)
+        response.raise_for_status()
         data = response.json()
-    except:
+    except Exception:
         return {
             "keyword": keyword,
             "count": 0,
@@ -84,34 +72,18 @@ def check_keyword(keyword):
         }
 
     items = data.get("items", [])
-    isbn_set = set()
-
-    exclude_words = [
-        "세트", "SET", "+", "워크북", "교재", "오디오",
-        "MP3", "CD", "특별판", "한정판", "리커버",
-        "합본", "패키지", "굿즈", "포함"
-    ]
+    no_seller_count = 0
 
     for item in items:
-        title = item.get("title", "").replace("<b>", "").replace("</b>", "")
+        price = item.get("price")
+        if not price or price == "0":
+            no_seller_count += 1
 
-        # 구성상품 제외
-        if any(word.lower() in title.lower() for word in exclude_words):
-            continue
-
-        # 유사도 필터
-        if similarity(keyword, title) >= 0.85:
-            isbn = normalize_isbn(item.get("isbn"))
-            if isbn:
-                isbn_set.add(isbn)
-
-    unique_count = len(isbn_set)
-
-    grade = "A" if unique_count <= 1 else "B"
+    grade = "A" if no_seller_count <= 1 else "B"
 
     return {
         "keyword": keyword,
-        "count": unique_count,
+        "count": no_seller_count,
         "grade": grade,
         "link": f"https://search.naver.com/search.naver?query={keyword}"
     }
@@ -126,7 +98,7 @@ def home():
         start = time.time()
 
         keywords = request.form.get("keywords", "").splitlines()
-        keywords = [k.strip() for k in keywords if k.strip()][:1000]
+        keywords = [k.strip() for k in keywords if k.strip()][:500]
 
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             futures = [executor.submit(check_keyword, kw) for kw in keywords]
