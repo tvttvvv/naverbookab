@@ -3,6 +3,7 @@ import requests
 import os
 import time
 import urllib.parse
+from difflib import SequenceMatcher
 
 app = Flask(__name__)
 
@@ -10,10 +11,11 @@ NAVER_CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
 NAVER_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")
 
 
-def search_book(keyword):
-    if not NAVER_CLIENT_ID or not NAVER_CLIENT_SECRET:
-        return 0
+def similarity(a, b):
+    return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
+
+def classify_keyword(keyword):
     url = "https://openapi.naver.com/v1/search/book.json"
 
     headers = {
@@ -30,13 +32,33 @@ def search_book(keyword):
         response = requests.get(url, headers=headers, params=params, timeout=10)
 
         if response.status_code != 200:
-            return 0
+            return 0, "B"
 
         data = response.json()
-        return len(data.get("items", []))
+        items = data.get("items", [])
+
+        count = len(items)
+
+        # 1차 필터: 개수 기준
+        if count > 5:
+            return count, "B"
+
+        # 2차 필터: 제목 유사도 검사
+        high_similarity_count = 0
+
+        for item in items:
+            title = item.get("title", "")
+            clean_title = title.replace("<b>", "").replace("</b>", "")
+            if similarity(keyword, clean_title) >= 0.8:
+                high_similarity_count += 1
+
+        if high_similarity_count == 1:
+            return count, "A"
+        else:
+            return count, "B"
 
     except:
-        return 0
+        return 0, "B"
 
 
 @app.route("/", methods=["GET"])
@@ -44,11 +66,8 @@ def index():
     return render_template("index.html")
 
 
-@app.route("/search", methods=["GET", "POST"])
+@app.route("/search", methods=["POST"])
 def search():
-    if request.method == "GET":
-        return render_template("index.html")
-
     keywords_raw = request.form.get("keywords", "")
     keywords = [k.strip() for k in keywords_raw.split("\n") if k.strip()]
 
@@ -56,8 +75,7 @@ def search():
     start_time = time.time()
 
     for keyword in keywords[:100]:
-        count = search_book(keyword)
-        classification = "A" if count <= 2 else "B"
+        count, classification = classify_keyword(keyword)
 
         naver_link = (
             "https://search.naver.com/search.naver?where=book&query="
