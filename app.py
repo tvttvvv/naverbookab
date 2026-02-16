@@ -1,154 +1,149 @@
-from flask import Flask, render_template_string, request, Response
+from flask import Flask, render_template_string, request, jsonify
 import requests
 import os
 import time
 import re
-from bs4 import BeautifulSoup
 from urllib.parse import quote
+from bs4 import BeautifulSoup
 
 app = Flask(__name__)
+
+NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID")
+NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET")
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0"
 }
 
-MAX_PARSE = 20        # 각 키워드당 최대 검사 개수
-A_MAX_RESULTS = 5     # 결과 5개 이하 + 판매처 0 → A
+progress_data = {
+    "total": 0,
+    "current": 0,
+    "start_time": 0,
+    "results": []
+}
 
 HTML = """
 <!doctype html>
 <title>naverbookab</title>
-<h1>naverbookab</h1>
+<h2>naverbookab</h2>
 
-<textarea id="keywords" rows="12" cols="60"
-placeholder="책 제목 한 줄에 하나씩 입력 (최대 1000개)"></textarea>
+<textarea id="keywords" rows="15" cols="70"
+placeholder="책 제목을 한 줄에 하나씩 입력"></textarea>
 <br>
 <p>총 입력 건수: <span id="count">0</span></p>
-<button onclick="start()">일괄 분류 시작</button>
+<button onclick="startSearch()">일괄 분류 시작</button>
 
-<hr>
-<div id="status"></div>
-<br>
-<div>
+<p id="progress"></p>
+
 정렬:
-<select id="sortSelect" onchange="sortTable()">
-<option value="original">원본</option>
-<option value="a_first">A 우선</option>
-<option value="b_first">B 우선</option>
+<select onchange="sortResults(this.value)">
+  <option value="original">원본</option>
+  <option value="Afirst">A 우선</option>
 </select>
-</div>
 
 <table border="1" cellpadding="5" id="resultTable">
-<thead>
 <tr>
 <th>키워드</th>
-<th>검색결과수</th>
+<th>판매처합</th>
 <th>분류</th>
 <th>링크</th>
 </tr>
-</thead>
-<tbody></tbody>
 </table>
 
 <script>
-let originalData = []
+const textarea = document.getElementById("keywords");
+textarea.addEventListener("input", () => {
+    const lines = textarea.value.split("\\n").filter(l => l.trim() !== "");
+    document.getElementById("count").innerText = lines.length;
+});
 
-document.getElementById("keywords").addEventListener("input", function(){
-    let lines = this.value.split("\\n").filter(x=>x.trim()!="")
-    document.getElementById("count").innerText = lines.length
-})
+function startSearch(){
+    const keywords = textarea.value;
+    fetch("/start", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({keywords: keywords})
+    });
+    pollProgress();
+}
 
-function start(){
-    let text = document.getElementById("keywords").value
-    let lines = text.split("\\n").filter(x=>x.trim()!="")
+function pollProgress(){
+    const interval = setInterval(() => {
+        fetch("/progress")
+        .then(res => res.json())
+        .then(data => {
+            if(data.total === 0) return;
+            document.getElementById("progress").innerText =
+                `진행: ${data.current}/${data.total} | 남은 예상시간: ${data.remaining}s`;
 
-    fetch("/stream",{
-        method:"POST",
-        headers:{ "Content-Type":"application/json"},
-        body: JSON.stringify({keywords: lines})
-    }).then(response=>{
-        const reader = response.body.getReader()
-        const decoder = new TextDecoder()
-        let received = 0
-        let total = lines.length
-        let startTime = Date.now()
+            if(data.current >= data.total){
+                clearInterval(interval);
+                loadResults();
+            }
+        });
+    }, 1000);
+}
 
-        function read(){
-            reader.read().then(({done,value})=>{
-                if(done) return
-                let chunk = decoder.decode(value)
-                let lines = chunk.split("\\n")
-                lines.forEach(line=>{
-                    if(line.trim()=="") return
-                    let data = JSON.parse(line)
-                    originalData.push(data)
-                    received++
+function loadResults(){
+    fetch("/results")
+    .then(res => res.json())
+    .then(data => {
+        const table = document.getElementById("resultTable");
+        table.innerHTML = `
+        <tr>
+        <th>키워드</th>
+        <th>판매처합</th>
+        <th>분류</th>
+        <th>링크</th>
+        </tr>`;
+        data.forEach(r => {
+            table.innerHTML += `
+            <tr>
+              <td>${r.keyword}</td>
+              <td>${r.total}</td>
+              <td>${r.grade}</td>
+              <td><a href="${r.link}" target="_blank">열기</a></td>
+            </tr>`;
+        });
+    });
+}
 
-                    let elapsed = (Date.now()-startTime)/1000
-                    let avg = elapsed/received
-                    let remain = Math.round(avg*(total-received))
-
-                    document.getElementById("status").innerHTML =
-                        "진행: "+received+"/"+total+
-                        " | 남은 예상시간: "+remain+"초"
-
-                    addRow(data)
-                })
-                read()
-            })
+function sortResults(type){
+    fetch("/results")
+    .then(res => res.json())
+    .then(data => {
+        if(type === "Afirst"){
+            data.sort((a,b)=> a.grade.localeCompare(b.grade));
         }
-        read()
-    })
-}
-
-function addRow(data){
-    let tbody = document.querySelector("#resultTable tbody")
-    let tr = document.createElement("tr")
-    tr.innerHTML = `
-        <td>${data.keyword}</td>
-        <td>${data.total}</td>
-        <td>${data.grade}</td>
-        <td><a href="${data.link}" target="_blank">열기</a></td>
-    `
-    tbody.appendChild(tr)
-}
-
-function sortTable(){
-    let val = document.getElementById("sortSelect").value
-    let tbody = document.querySelector("#resultTable tbody")
-    tbody.innerHTML = ""
-
-    let sorted = [...originalData]
-
-    if(val=="a_first"){
-        sorted.sort((a,b)=>a.grade.localeCompare(b.grade))
-    }
-    if(val=="b_first"){
-        sorted.sort((a,b)=>b.grade.localeCompare(a.grade))
-    }
-
-    sorted.forEach(addRow)
+        const table = document.getElementById("resultTable");
+        table.innerHTML = `
+        <tr>
+        <th>키워드</th>
+        <th>판매처합</th>
+        <th>분류</th>
+        <th>링크</th>
+        </tr>`;
+        data.forEach(r => {
+            table.innerHTML += `
+            <tr>
+              <td>${r.keyword}</td>
+              <td>${r.total}</td>
+              <td>${r.grade}</td>
+              <td><a href="${r.link}" target="_blank">열기</a></td>
+            </tr>`;
+        });
+    });
 }
 </script>
 """
 
-# 🔥 핵심: 판매처 탐지 (절대 통과 금지)
-def has_seller_block(card):
-    links = card.find_all("a")
-    for a in links:
-        txt = a.get_text(strip=True)
-        if re.search(r"판매처\s*\d+", txt):
-            return True
-    return False
-
-
 def check_keyword(keyword):
-
-    url = f"https://search.naver.com/search.naver?where=nexearch&sm=tab_jum&query={quote(keyword)}&tab=book"
+    url = f"https://search.naver.com/search.naver?where=nexearch&query={quote(keyword)}+도서"
 
     try:
         res = requests.get(url, headers=HEADERS, timeout=10)
-        html = res.text
+        soup = BeautifulSoup(res.text, "html.parser")
+        text = soup.get_text()
     except:
         return {
             "keyword": keyword,
@@ -157,59 +152,66 @@ def check_keyword(keyword):
             "link": url
         }
 
-    soup = BeautifulSoup(html, "html.parser")
+    # 🔴 판매처 숫자 모두 찾기
+    seller_matches = re.findall(r"판매처\s*(\d+)", text)
 
-    cards = soup.select("li.bx")
-    if not cards:
-        cards = soup.select("div.book_wrap")
+    total_seller = sum(int(x) for x in seller_matches)
 
-    total = 0
-    seller_found = False
-
-    for c in cards[:MAX_PARSE]:
-        total += 1
-
-        # 🔴 판매처 n 있으면 즉시 B 확정
-        if has_seller_block(c):
-            seller_found = True
-            break
-
-    if seller_found:
+    # 🔥 판매처 숫자 하나라도 있으면 무조건 B
+    if total_seller > 0:
         grade = "B"
     else:
-        grade = "A" if total <= A_MAX_RESULTS else "B"
+        grade = "A"
 
     return {
         "keyword": keyword,
-        "total": total,
+        "total": total_seller,
         "grade": grade,
         "link": url
     }
 
-
 @app.route("/")
 def home():
-    return render_template_string(HTML)
+    return HTML
 
-
-@app.route("/stream", methods=["POST"])
-def stream():
-
+@app.route("/start", methods=["POST"])
+def start():
     data = request.get_json()
-    keywords = data.get("keywords", [])[:1000]
+    keywords = [k.strip() for k in data["keywords"].splitlines() if k.strip()]
 
-    def generate():
-        for kw in keywords:
-            result = check_keyword(kw.strip())
-            yield (json_dumps(result) + "\n")
+    progress_data["total"] = len(keywords)
+    progress_data["current"] = 0
+    progress_data["start_time"] = time.time()
+    progress_data["results"] = []
 
-    return Response(generate(), mimetype="text/plain")
+    for kw in keywords:
+        result = check_keyword(kw)
+        progress_data["results"].append(result)
+        progress_data["current"] += 1
 
+    return jsonify({"status":"started"})
 
-def json_dumps(obj):
-    import json
-    return json.dumps(obj, ensure_ascii=False)
+@app.route("/progress")
+def progress():
+    total = progress_data["total"]
+    current = progress_data["current"]
 
+    if current == 0:
+        remaining = 0
+    else:
+        elapsed = time.time() - progress_data["start_time"]
+        avg = elapsed / current
+        remaining = int(avg * (total - current))
+
+    return jsonify({
+        "total": total,
+        "current": current,
+        "remaining": remaining
+    })
+
+@app.route("/results")
+def results():
+    return jsonify(progress_data["results"])
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
