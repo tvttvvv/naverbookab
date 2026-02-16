@@ -1,75 +1,35 @@
 <!DOCTYPE html>
 <html>
 <head>
-<meta charset="UTF-8">
-<title>naverbookab</title>
-<style>
-body { font-family: Arial; padding: 20px; }
-textarea { width: 400px; height: 200px; }
-table { border-collapse: collapse; margin-top: 20px; }
-th, td { border: 1px solid #999; padding: 6px; }
-th { background: #eee; }
-</style>
+    <title>naverbookab</title>
 </head>
 <body>
+    <h1>naverbookab</h1>
 
-<h2>naverbookab</h2>
+    <form method="POST">
+        <textarea name="keywords" rows="15" cols="50"></textarea><br><br>
+        <button type="submit">일괄 분류</button>
+    </form>
 
-<textarea id="keywords" placeholder="한 줄에 하나씩 입력"></textarea><br>
-<button onclick="startSearch()">일괄 분류</button>
+    {% if total_time %}
+        <p><strong>총 소요시간:</strong> {{ total_time }}초</p>
+    {% endif %}
 
-<p id="timeInfo"></p>
-
-<table id="resultTable">
-<thead>
-<tr>
-<th>키워드</th>
-<th>결과 개수</th>
-<th>분류</th>
-<th>네이버 링크</th>
-</tr>
-</thead>
-<tbody></tbody>
-</table>
-
-<script>
-function startSearch() {
-    const raw = document.getElementById("keywords").value;
-    const keywords = raw.split("\n");
-
-    document.getElementById("timeInfo").innerText = "검색 중...";
-
-    fetch("/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ keywords: keywords })
-    })
-    .then(res => res.json())
-    .then(data => {
-        const tbody = document.querySelector("#resultTable tbody");
-        tbody.innerHTML = "";
-
-        data.results.forEach(item => {
-            const row = `
-                <tr>
-                    <td>${item.keyword}</td>
-                    <td>${item.count}</td>
-                    <td>${item.class}</td>
-                    <td><a href="${item.link}" target="_blank">열기</a></td>
-                </tr>
-            `;
-            tbody.innerHTML += row;
-        });
-
-        document.getElementById("timeInfo").innerText =
-            "총 소요시간: " + data.time + "초";
-    })
-    .catch(err => {
-        document.getElementById("timeInfo").innerText =
-            "오류 발생";
-    });
-}
-</script>
-
+    {% if results %}
+    <table border="1" cellpadding="5">
+        <tr>
+            <th>키워드</th>
+            <th>결과 개수</th>
+            <th>분류</th>
+        </tr>
+        {% for r in results %}
+        <tr>
+            <td>{{ r.keyword }}</td>
+            <td>{{ r.count }}</td>
+            <td>{{ r.class }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% endif %}
 </body>
 </html>
