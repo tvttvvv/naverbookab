@@ -1,7 +1,9 @@
-from flask import Flask, render_template_string, request, jsonify
+from flask import Flask, render_template_string, request, jsonify, send_file
 import requests
 import re
 import time
+import csv
+import io
 
 app = Flask(__name__)
 
@@ -20,6 +22,7 @@ placeholder="책 제목을 한 줄에 하나씩 입력"></textarea><br><br>
 <p>총 입력 건수: <span id="count">0</span></p>
 
 <button onclick="startSearch()">일괄 분류 시작</button>
+<button onclick="downloadExcel()">엑셀 다운로드</button>
 
 <p id="progress"></p>
 
@@ -59,7 +62,7 @@ function startSearch(){
     originalOrder = lines;
     total = lines.length;
 
-    processNext(lines);
+    processNext([...lines]);
 }
 
 function processNext(queue){
@@ -117,43 +120,49 @@ function renderTable(){
         <td>${r.keyword}</td>
         <td>${r.count}</td>
         <td>${r.grade}</td>
-        <td><a href="${r.link}" target="_blank">열기</a></td>
+        <td>${r.link}</td>
         </tr>`;
+    });
+}
+
+function downloadExcel(){
+    fetch("/download", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({results: results})
+    })
+    .then(res => res.blob())
+    .then(blob => {
+        let url = window.URL.createObjectURL(blob);
+        let a = document.createElement("a");
+        a.href = url;
+        a.download = "naverbookab_result.csv";
+        a.click();
     });
 }
 </script>
 """
 
 def check_keyword(keyword):
-    url = "https://search.naver.com/search.naver"
-    params = {"query": keyword}
+    url = f"https://search.naver.com/search.naver?query={keyword}"
     try:
-        r = requests.get(url, params=params, headers=HEADERS, timeout=5)
+        r = requests.get(url, headers=HEADERS, timeout=5)
         html = r.text
-
         match = re.search(r"판매처\s*(\d+)", html)
-
-        if match:
-            count = int(match.group(1))
-        else:
-            count = 0
-
-        # 판매처 하나라도 있으면 B
+        count = int(match.group(1)) if match else 0
         grade = "A" if count == 0 else "B"
-
         return {
             "keyword": keyword,
             "count": count,
             "grade": grade,
-            "link": f"https://search.naver.com/search.naver?query={keyword}"
+            "link": url
         }
-
     except:
         return {
             "keyword": keyword,
             "count": 0,
             "grade": "B",
-            "link": f"https://search.naver.com/search.naver?query={keyword}"
+            "link": url
         }
 
 @app.route("/")
@@ -163,8 +172,28 @@ def home():
 @app.route("/check", methods=["POST"])
 def check():
     data = request.get_json()
-    keyword = data["keyword"]
-    return jsonify(check_keyword(keyword))
+    return jsonify(check_keyword(data["keyword"]))
+
+@app.route("/download", methods=["POST"])
+def download():
+    data = request.get_json()
+    results = data.get("results", [])
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["키워드", "판매처개수", "분류", "링크"])
+
+    for r in results:
+        writer.writerow([r["keyword"], r["count"], r["grade"], r["link"]])
+
+    output.seek(0)
+
+    return send_file(
+        io.BytesIO(output.getvalue().encode("utf-8-sig")),
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name="naverbookab_result.csv"
+    )
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
