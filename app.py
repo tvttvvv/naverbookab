@@ -1,13 +1,14 @@
 from flask import Flask, render_template_string, request
 import requests
-import re
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from bs4 import BeautifulSoup
+from urllib.parse import quote
 
 app = Flask(__name__)
 
 MAX_WORKERS = 20
+TIMEOUT = 5
 
 HTML = """
 <!doctype html>
@@ -15,20 +16,36 @@ HTML = """
 <h1>naverbookab</h1>
 
 <form method="post">
-<textarea name="keywords" rows="15" cols="70"
-placeholder="책 제목을 한 줄에 하나씩 입력 (최대 500개)"></textarea>
+<textarea name="keywords" id="kw" rows="15" cols="60"
+placeholder="책 제목을 한 줄에 하나씩 입력 (최대 1000개)"
+oninput="updateCount()"></textarea><br>
+<p>총 입력 건수: <b><span id="count">0</span></b></p>
+<select name="sort_type">
+<option value="original">원본순</option>
+<option value="best">A에 가까운순</option>
+</select>
 <br><br>
 <button type="submit">일괄 분류</button>
 </form>
 
+<script>
+function updateCount(){
+    let text = document.getElementById("kw").value;
+    let lines = text.split("\\n").filter(l => l.trim() !== "");
+    document.getElementById("count").innerText = lines.length;
+}
+</script>
+
 {% if results %}
 <p><b>총 소요시간:</b> {{ total_time }}초</p>
+<p><b>A 조건 충족 개수:</b> {{ a_count }}</p>
+
 <table border="1" cellpadding="5">
 <tr>
 <th>키워드</th>
-<th>판매처 여부</th>
+<th>판매처 존재 여부</th>
 <th>분류</th>
-<th>링크</th>
+<th>네이버 링크</th>
 </tr>
 
 {% for r in results %}
@@ -43,61 +60,81 @@ placeholder="책 제목을 한 줄에 하나씩 입력 (최대 500개)"></textar
 {% endif %}
 """
 
-def check_keyword(keyword):
-    url = f"https://search.naver.com/search.naver?where=book&query={keyword}"
+def check_keyword(keyword, index):
+    link = f"https://search.naver.com/search.naver?where=book&query={quote(keyword)}"
 
     try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers, timeout=5)
+        response = requests.get(link, timeout=TIMEOUT, headers={
+            "User-Agent": "Mozilla/5.0"
+        })
         html = response.text
     except:
         return {
             "keyword": keyword,
             "seller": "확인실패",
             "grade": "B",
-            "link": url
+            "link": link,
+            "index": index
         }
 
-    soup = BeautifulSoup(html, "html.parser")
-    text = soup.get_text(" ", strip=True)
-
-    # 판매처 N 문구 찾기
-    seller_match = re.search(r"판매처\s*\d+", text)
-
-    if seller_match:
+    # 🔥 핵심: "판매처 " 텍스트 존재 여부로 판단
+    if "판매처" in html:
+        seller_exist = "있음"
         grade = "B"
-        seller_status = "있음"
     else:
+        seller_exist = "없음"
         grade = "A"
-        seller_status = "없음"
 
     return {
         "keyword": keyword,
-        "seller": seller_status,
+        "seller": seller_exist,
         "grade": grade,
-        "link": url
+        "link": link,
+        "index": index
     }
+
 
 @app.route("/", methods=["GET", "POST"])
 def home():
     results = []
     total_time = 0
+    a_count = 0
 
     if request.method == "POST":
         start = time.time()
 
+        sort_type = request.form.get("sort_type")
+
         keywords = request.form.get("keywords", "").splitlines()
-        keywords = [k.strip() for k in keywords if k.strip()][:500]
+        keywords = [k.strip() for k in keywords if k.strip()][:1000]
 
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = [executor.submit(check_keyword, kw) for kw in keywords]
+            futures = [
+                executor.submit(check_keyword, kw, i)
+                for i, kw in enumerate(keywords)
+            ]
 
             for future in as_completed(futures):
-                results.append(future.result())
+                result = future.result()
+                results.append(result)
 
         total_time = round(time.time() - start, 2)
 
-    return render_template_string(HTML, results=results, total_time=total_time)
+        # A 개수 계산
+        a_count = sum(1 for r in results if r["grade"] == "A")
+
+        # 🔥 정렬
+        if sort_type == "best":
+            results.sort(key=lambda x: (x["grade"] != "A", x["index"]))
+        else:
+            results.sort(key=lambda x: x["index"])
+
+    return render_template_string(
+        HTML,
+        results=results,
+        total_time=total_time,
+        a_count=a_count
+    )
 
 
 if __name__ == "__main__":
