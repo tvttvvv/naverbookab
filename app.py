@@ -15,45 +15,49 @@ browser = playwright.chromium.launch(
 
 def classify_naver_book(html):
     soup = BeautifulSoup(html, "html.parser")
+    full_text = soup.get_text(" ", strip=True)
 
-    # 🔴 대표 카드 구조 먼저 차단
-    page_text = soup.get_text(" ", strip=True)
-    if re.search(r"판매처\s*\d+", page_text):
+    # 1️⃣ 대표 단일 상품형 감지
+    if re.search(r"도서\s*판매처\s*\d+", full_text):
         return "B", 1
 
-    # 🟢 실제 도서 리스트 영역 찾기
-    book_list = soup.select("ul.list_book > li")
+    # 2️⃣ 반복 제목 링크 세기 (안정적 기준)
+    title_links = soup.find_all("a", href=re.compile(r"/search.naver\?where=book"))
 
-    real_count = len(book_list)
+    count = len(title_links)
 
-    if real_count <= 2:
-        return "A", real_count
+    # 너무 많이 잡히는 경우 방지
+    if count > 20:
+        count = 20
+
+    if count <= 2:
+        return "A", count
     else:
-        return "B", real_count
+        return "B", count
 
 
 def crawl(keyword):
-    start_time = time.time()
+    start = time.time()
 
     url = f"https://search.naver.com/search.naver?where=book&query={urllib.parse.quote(keyword)}"
 
     page = browser.new_page()
     page.goto(url, wait_until="networkidle")
-    time.sleep(1.5)
+    time.sleep(1.2)
 
     html = page.content()
     page.close()
 
     cls, count = classify_naver_book(html)
 
-    end_time = time.time()
+    end = time.time()
 
     return {
         "keyword": keyword,
         "class": cls,
         "count": count,
         "url": url,
-        "time": round(end_time - start_time, 2)
+        "time": round(end - start, 2)
     }
 
 
@@ -76,8 +80,3 @@ def search():
 
     except Exception as e:
         return jsonify({"error": str(e)})
-
-
-@app.route("/health")
-def health():
-    return jsonify({"status": "naverbookab running"})
