@@ -1,38 +1,29 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html>
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="utf-8">
   <title>naverbookab</title>
-  <style>
-    body { font-family: Arial; padding: 20px; }
-    textarea { width: 420px; height: 120px; }
-    button { padding: 6px 10px; margin-top: 5px; }
-    table { border-collapse: collapse; margin-top: 20px; width: 100%; max-width: 1000px; }
-    th, td { border: 1px solid #ddd; padding: 8px; }
-    th { background: #f2f2f2; }
-    .A { color: green; font-weight: bold; }
-    .B { color: red; font-weight: bold; }
-  </style>
 </head>
 <body>
+  <h2>naverbookab</h2>
 
-<h2>naverbookab</h2>
+  <textarea id="keywords" rows="10" cols="50"
+    placeholder="키워드 한 줄에 하나씩 입력"></textarea><br><br>
 
-<textarea id="keywords" placeholder="키워드를 여러 줄로 입력"></textarea><br/>
-<button onclick="searchMany()">일괄 분류</button>
+  <button onclick="run()">일괄 분류</button>
 
-<table>
-  <thead>
-    <tr>
-      <th>A 선택</th>
-      <th>키워드</th>
-      <th>결과 개수</th>
-      <th>분류</th>
-      <th>네이버 링크</th>
-    </tr>
-  </thead>
-  <tbody id="resultBody"></tbody>
-</table>
+  <table border="1" style="margin-top:20px;">
+    <thead>
+      <tr>
+        <th>A 선택</th>
+        <th>키워드</th>
+        <th>결과 개수</th>
+        <th>분류</th>
+        <th>네이버 링크</th>
+      </tr>
+    </thead>
+    <tbody id="result"></tbody>
+  </table>
 
 <script src="/static/app.js"></script>
 </body>
