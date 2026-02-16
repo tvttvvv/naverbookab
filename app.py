@@ -3,6 +3,7 @@ from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 import urllib.parse
 import time
+import re
 
 app = Flask(__name__)
 
@@ -16,14 +17,22 @@ browser = playwright.chromium.launch(
 def classify_naver_book(html):
     soup = BeautifulSoup(html, "html.parser")
 
-    # 실제 도서 제목 링크 기준으로 카운트
-    titles = soup.select("a.title")
-    count = len(titles)
+    cards = soup.select("li.bx")
+    real_count = 0
 
-    if count <= 2:
-        return "A", count
+    for card in cards:
+        text = card.get_text(" ", strip=True)
+
+        # 대표 카드 제외 (판매처 포함된 카드 제외)
+        if re.search(r"판매처\s*\d+", text):
+            continue
+
+        real_count += 1
+
+    if real_count <= 2:
+        return "A", real_count
     else:
-        return "B", count
+        return "B", real_count
 
 
 def crawl(keyword):
