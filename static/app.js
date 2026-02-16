@@ -1,3 +1,7 @@
+if (keywords.length > 20) {
+  alert("한 번에 20개 이하만 입력하세요");
+  return;
+}
 async function searchMany() {
   const raw = document.getElementById("keywords").value.trim();
   if (!raw) return;
@@ -31,3 +35,4 @@ async function searchMany() {
     }
   }
 }
+
