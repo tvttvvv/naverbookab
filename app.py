@@ -1,55 +1,50 @@
 from flask import Flask, render_template_string, request
 import requests
-import os
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import re
 from urllib.parse import quote
 
 app = Flask(__name__)
 
-MAX_WORKERS = 20
+MAX_WORKERS = 15
 TIMEOUT = 5
 
 HTML = """
 <!doctype html>
 <title>naverbookab</title>
+
 <h1>naverbookab</h1>
 
 <form method="post">
-<textarea name="keywords" id="kw" rows="15" cols="60"
+<textarea name="keywords" rows="15" cols="60"
 placeholder="책 제목을 한 줄에 하나씩 입력 (최대 1000개)"
-oninput="updateCount()"></textarea><br>
-<p>총 입력 건수: <b><span id="count">0</span></b></p>
-<select name="sort_type">
+oninput="updateCount(this)"></textarea><br>
+<p>입력 개수: <span id="count">0</span></p>
+
+<select name="sort_option">
 <option value="original">원본순</option>
-<option value="best">A에 가까운순</option>
+<option value="a_top">A 위로 정렬</option>
+<option value="a_bottom">A 아래로 정렬</option>
 </select>
+
 <br><br>
 <button type="submit">일괄 분류</button>
 </form>
 
-<script>
-function updateCount(){
-    let text = document.getElementById("kw").value;
-    let lines = text.split("\\n").filter(l => l.trim() !== "");
-    document.getElementById("count").innerText = lines.length;
-}
-</script>
-
 {% if results %}
+<p><b>총 입력 개수:</b> {{ total_count }}개</p>
 <p><b>총 소요시간:</b> {{ total_time }}초</p>
-<p><b>A 조건 충족 개수:</b> {{ a_count }}</p>
 
 <table border="1" cellpadding="5">
 <tr>
 <th>키워드</th>
-<th>판매처 존재 여부</th>
+<th>판매처 여부</th>
 <th>분류</th>
 <th>네이버 링크</th>
 </tr>
 
 {% for r in results %}
-<tr>
+<tr {% if r.grade == 'A' %}style="background-color:#eaffea;"{% endif %}>
 <td>{{ r.keyword }}</td>
 <td>{{ r.seller }}</td>
 <td>{{ r.grade }}</td>
@@ -58,6 +53,13 @@ function updateCount(){
 {% endfor %}
 </table>
 {% endif %}
+
+<script>
+function updateCount(textarea) {
+    let lines = textarea.value.split("\\n").filter(x => x.trim() !== "");
+    document.getElementById("count").innerText = lines.length;
+}
+</script>
 """
 
 def check_keyword(keyword, index):
@@ -77,8 +79,10 @@ def check_keyword(keyword, index):
             "index": index
         }
 
-    # 🔥 핵심: "판매처 " 텍스트 존재 여부로 판단
-    if "판매처" in html:
+    # 🔥 절대 A에 판매처 있는게 들어가지 않도록
+    seller_match = re.search(r"판매처\s*\d+", html)
+
+    if seller_match:
         seller_exist = "있음"
         grade = "B"
     else:
@@ -93,39 +97,32 @@ def check_keyword(keyword, index):
         "index": index
     }
 
-
 @app.route("/", methods=["GET", "POST"])
 def home():
     results = []
     total_time = 0
-    a_count = 0
+    total_count = 0
 
     if request.method == "POST":
         start = time.time()
 
-        sort_type = request.form.get("sort_type")
-
         keywords = request.form.get("keywords", "").splitlines()
-        keywords = [k.strip() for k in keywords if k.strip()][:1000]
+        keywords = [k.strip() for k in keywords if k.strip()]
+        total_count = len(keywords)
 
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = [
-                executor.submit(check_keyword, kw, i)
-                for i, kw in enumerate(keywords)
-            ]
+        sort_option = request.form.get("sort_option", "original")
 
-            for future in as_completed(futures):
-                result = future.result()
-                results.append(result)
+        for i, keyword in enumerate(keywords):
+            result = check_keyword(keyword, i)
+            results.append(result)
 
         total_time = round(time.time() - start, 2)
 
-        # A 개수 계산
-        a_count = sum(1 for r in results if r["grade"] == "A")
-
-        # 🔥 정렬
-        if sort_type == "best":
+        # 정렬 기능
+        if sort_option == "a_top":
             results.sort(key=lambda x: (x["grade"] != "A", x["index"]))
+        elif sort_option == "a_bottom":
+            results.sort(key=lambda x: (x["grade"] == "A", x["index"]))
         else:
             results.sort(key=lambda x: x["index"])
 
@@ -133,9 +130,8 @@ def home():
         HTML,
         results=results,
         total_time=total_time,
-        a_count=a_count
+        total_count=total_count
     )
-
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
