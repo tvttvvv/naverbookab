@@ -4,7 +4,8 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "BookVPro Server Running!"
+    return "naverbookab"
 
 if __name__ == "__main__":
+
     app.run()
