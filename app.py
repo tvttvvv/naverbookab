@@ -7,7 +7,6 @@ import re
 
 app = Flask(__name__)
 
-# Playwright 전역 실행
 playwright = sync_playwright().start()
 browser = playwright.chromium.launch(
     headless=True,
@@ -17,17 +16,15 @@ browser = playwright.chromium.launch(
 def classify_naver_book(html):
     soup = BeautifulSoup(html, "html.parser")
 
-    cards = soup.select("li.bx")
-    real_count = 0
+    # 🔴 대표 카드 구조 먼저 차단
+    page_text = soup.get_text(" ", strip=True)
+    if re.search(r"판매처\s*\d+", page_text):
+        return "B", 1
 
-    for card in cards:
-        text = card.get_text(" ", strip=True)
+    # 🟢 실제 도서 리스트 영역 찾기
+    book_list = soup.select("ul.list_book > li")
 
-        # 대표 카드 제외 (판매처 포함된 카드 제외)
-        if re.search(r"판매처\s*\d+", text):
-            continue
-
-        real_count += 1
+    real_count = len(book_list)
 
     if real_count <= 2:
         return "A", real_count
@@ -42,7 +39,7 @@ def crawl(keyword):
 
     page = browser.new_page()
     page.goto(url, wait_until="networkidle")
-    time.sleep(1.2)
+    time.sleep(1.5)
 
     html = page.content()
     page.close()
