@@ -6,22 +6,28 @@ import time
 
 app = Flask(__name__)
 
-# 🔥 전역 브라우저 유지
+# Playwright 전역 실행
 playwright = sync_playwright().start()
-browser = playwright.chromium.launch(headless=True, args=["--no-sandbox"])
+browser = playwright.chromium.launch(
+    headless=True,
+    args=["--no-sandbox"]
+)
 
 def classify_naver_book(html):
-    soup = BeautifulSoup(html, 'html.parser')
-    result_cards = soup.select("li.bx")
-    count = len(result_cards)
+    soup = BeautifulSoup(html, "html.parser")
 
+    # 네이버 도서 카드 개수
+    cards = soup.select("li.bx")
+    count = len(cards)
+
+    # A는 최대 2개
     if count <= 2:
         return "A", count
     else:
         return "B", count
 
 
-def crawl_naver_book(keyword):
+def crawl(keyword):
     url = f"https://search.naver.com/search.naver?where=book&query={urllib.parse.quote(keyword)}"
 
     page = browser.new_page()
@@ -48,10 +54,15 @@ def index():
 @app.route("/search", methods=["POST"])
 def search():
     try:
-        data = request.json
+        data = request.get_json(force=True)
         keyword = data.get("keyword")
-        result = crawl_naver_book(keyword)
+
+        if not keyword:
+            return jsonify({"error": "keyword missing"})
+
+        result = crawl(keyword)
         return jsonify(result)
+
     except Exception as e:
         return jsonify({"error": str(e)})
 
