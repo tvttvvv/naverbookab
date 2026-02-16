@@ -2,11 +2,15 @@ from flask import Flask, render_template_string, request
 import requests
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app = Flask(__name__)
 
 NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID")
 NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET")
+
+MAX_WORKERS = 25   # 동시에 처리할 스레드 수 (25면 안정적)
+MAX_DISPLAY = 50   # 검색 최대 개수
 
 HTML = """
 <!doctype html>
@@ -14,7 +18,8 @@ HTML = """
 <h1>naverbookab</h1>
 
 <form method="post">
-<textarea name="keywords" rows="10" cols="50" placeholder="책 제목을 한 줄에 하나씩 입력"></textarea><br><br>
+<textarea name="keywords" rows="15" cols="60"
+placeholder="책 제목을 한 줄에 하나씩 입력 (최대 500개)"></textarea><br><br>
 <button type="submit">일괄 분류</button>
 </form>
 
@@ -51,33 +56,37 @@ def check_keyword(keyword):
 
     params = {
         "query": keyword,
-        "display": 50
+        "display": MAX_DISPLAY
     }
 
     try:
-        response = requests.get(url, headers=headers, params=params, timeout=5)
+        response = requests.get(url, headers=headers, params=params, timeout=3)
         response.raise_for_status()
         data = response.json()
     except Exception:
-        return 0, "B"
+        return {
+            "keyword": keyword,
+            "count": 0,
+            "grade": "B",
+            "link": f"https://search.naver.com/search.naver?query={keyword}"
+        }
 
     items = data.get("items", [])
     no_seller_count = 0
 
     for item in items:
         price = item.get("price")
-
-        # 판매처 없는 상품
         if not price or price == "0":
             no_seller_count += 1
 
-    # 기준: 판매처 없는 상품이 1개 이하 → A
-    if no_seller_count <= 1:
-        grade = "A"
-    else:
-        grade = "B"
+    grade = "A" if no_seller_count <= 1 else "B"
 
-    return no_seller_count, grade
+    return {
+        "keyword": keyword,
+        "count": no_seller_count,
+        "grade": grade,
+        "link": f"https://search.naver.com/search.naver?query={keyword}"
+    }
 
 
 @app.route("/", methods=["GET", "POST"])
@@ -89,22 +98,19 @@ def home():
         start = time.time()
 
         keywords = request.form.get("keywords", "").splitlines()
+        keywords = [k.strip() for k in keywords if k.strip()][:500]
 
-        for keyword in keywords:
-            keyword = keyword.strip()
-            if not keyword:
-                continue
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = [executor.submit(check_keyword, kw) for kw in keywords]
 
-            count, grade = check_keyword(keyword)
-
-            results.append({
-                "keyword": keyword,
-                "count": count,
-                "grade": grade,
-                "link": f"https://search.naver.com/search.naver?query={keyword}"
-            })
+            for future in as_completed(futures):
+                results.append(future.result())
 
         total_time = round(time.time() - start, 2)
+
+        # 입력 순서대로 정렬
+        keyword_order = {k: i for i, k in enumerate(keywords)}
+        results.sort(key=lambda x: keyword_order.get(x["keyword"], 0))
 
     return render_template_string(HTML, results=results, total_time=total_time)
 
