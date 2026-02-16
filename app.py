@@ -1,7 +1,8 @@
-from flask import Flask, render_template_string, request
+from flask import Flask, request, jsonify, render_template_string
 import requests
 import os
 import time
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app = Flask(__name__)
@@ -9,41 +10,88 @@ app = Flask(__name__)
 NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID")
 NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET")
 
-MAX_WORKERS = 25   # 동시에 처리할 스레드 수 (25면 안정적)
-MAX_DISPLAY = 50   # 검색 최대 개수
+MAX_WORKERS = 20
+MAX_DISPLAY = 20
+
+job_status = {
+    "running": False,
+    "total": 0,
+    "done": 0,
+    "results": [],
+    "start_time": 0
+}
 
 HTML = """
 <!doctype html>
 <title>naverbookab</title>
 <h1>naverbookab</h1>
 
-<form method="post">
-<textarea name="keywords" rows="15" cols="60"
-placeholder="책 제목을 한 줄에 하나씩 입력 (최대 500개)"></textarea><br><br>
-<button type="submit">일괄 분류</button>
-</form>
+<textarea id="keywords" rows="15" cols="60"
+placeholder="책 제목을 한 줄에 하나씩 입력 (최대 1000개)"></textarea><br><br>
 
-{% if results %}
-<p><b>총 소요시간:</b> {{ total_time }}초</p>
-<table border="1" cellpadding="5">
+<button onclick="startJob()">일괄 분류 시작</button>
+
+<p id="progress"></p>
+<p id="eta"></p>
+
+<table border="1" cellpadding="5" id="resultTable" style="display:none;">
 <tr>
 <th>키워드</th>
-<th>판매처 없는 개수</th>
+<th>판매처없는개수</th>
 <th>분류</th>
-<th>네이버 링크</th>
+<th>링크</th>
 </tr>
-
-{% for r in results %}
-<tr>
-<td>{{ r.keyword }}</td>
-<td>{{ r.count }}</td>
-<td>{{ r.grade }}</td>
-<td><a href="{{ r.link }}" target="_blank">열기</a></td>
-</tr>
-{% endfor %}
-
 </table>
-{% endif %}
+
+<script>
+function startJob(){
+    let keywords = document.getElementById("keywords").value;
+
+    fetch("/start", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({keywords:keywords})
+    });
+
+    checkStatus();
+}
+
+function checkStatus(){
+    let interval = setInterval(()=>{
+        fetch("/status")
+        .then(res=>res.json())
+        .then(data=>{
+            if(!data.running && data.done===0) return;
+
+            let percent = ((data.done/data.total)*100).toFixed(1);
+            document.getElementById("progress").innerText =
+                "진행률: " + percent + "% ("+data.done+"/"+data.total+")";
+
+            document.getElementById("eta").innerText =
+                "예상 남은 시간: " + data.eta + "초";
+
+            if(!data.running && data.done===data.total){
+                clearInterval(interval);
+                showResults(data.results);
+            }
+        })
+    },1000);
+}
+
+function showResults(results){
+    let table = document.getElementById("resultTable");
+    table.style.display="block";
+
+    results.forEach(r=>{
+        let row = table.insertRow();
+        row.insertCell(0).innerText = r.keyword;
+        row.insertCell(1).innerText = r.count;
+        row.insertCell(2).innerText = r.grade;
+        row.insertCell(3).innerHTML =
+            "<a href='"+r.link+"' target='_blank'>열기</a>";
+    });
+}
+</script>
 """
 
 def check_keyword(keyword):
@@ -61,9 +109,8 @@ def check_keyword(keyword):
 
     try:
         response = requests.get(url, headers=headers, params=params, timeout=3)
-        response.raise_for_status()
         data = response.json()
-    except Exception:
+    except:
         return {
             "keyword": keyword,
             "count": 0,
@@ -72,47 +119,79 @@ def check_keyword(keyword):
         }
 
     items = data.get("items", [])
-    no_seller_count = 0
+    no_seller = 0
 
     for item in items:
         price = item.get("price")
         if not price or price == "0":
-            no_seller_count += 1
+            no_seller += 1
 
-    grade = "A" if no_seller_count <= 1 else "B"
+    grade = "A" if no_seller <= 1 else "B"
 
     return {
         "keyword": keyword,
-        "count": no_seller_count,
+        "count": no_seller,
         "grade": grade,
         "link": f"https://search.naver.com/search.naver?query={keyword}"
     }
 
 
-@app.route("/", methods=["GET", "POST"])
+def background_job(keywords):
+    job_status["running"] = True
+    job_status["total"] = len(keywords)
+    job_status["done"] = 0
+    job_status["results"] = []
+    job_status["start_time"] = time.time()
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {executor.submit(check_keyword, kw): kw for kw in keywords}
+
+        for future in as_completed(futures):
+            result = future.result()
+            job_status["results"].append(result)
+            job_status["done"] += 1
+
+    job_status["running"] = False
+
+
+@app.route("/")
 def home():
-    results = []
-    total_time = 0
+    return render_template_string(HTML)
 
-    if request.method == "POST":
-        start = time.time()
 
-        keywords = request.form.get("keywords", "").splitlines()
-        keywords = [k.strip() for k in keywords if k.strip()][:500]
+@app.route("/start", methods=["POST"])
+def start():
+    if job_status["running"]:
+        return jsonify({"status":"already running"})
 
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = [executor.submit(check_keyword, kw) for kw in keywords]
+    data = request.json
+    keywords = data.get("keywords","").splitlines()
+    keywords = [k.strip() for k in keywords if k.strip()][:1000]
 
-            for future in as_completed(futures):
-                results.append(future.result())
+    thread = threading.Thread(target=background_job, args=(keywords,))
+    thread.start()
 
-        total_time = round(time.time() - start, 2)
+    return jsonify({"status":"started"})
 
-        # 입력 순서대로 정렬
-        keyword_order = {k: i for i, k in enumerate(keywords)}
-        results.sort(key=lambda x: keyword_order.get(x["keyword"], 0))
 
-    return render_template_string(HTML, results=results, total_time=total_time)
+@app.route("/status")
+def status():
+    if job_status["total"] == 0:
+        return jsonify(job_status)
+
+    elapsed = time.time() - job_status["start_time"]
+    avg = elapsed / job_status["done"] if job_status["done"] else 0
+    remaining = job_status["total"] - job_status["done"]
+    eta = int(avg * remaining) if avg else 0
+
+    return jsonify({
+        "running": job_status["running"],
+        "total": job_status["total"],
+        "done": job_status["done"],
+        "eta": eta,
+        "results": job_status["results"]
+            if not job_status["running"] else []
+    })
 
 
 if __name__ == "__main__":
